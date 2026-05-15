@@ -1,1 +1,4 @@
 jdk/
+# IntelliJ stuff
+out/
+proglang-java.iml

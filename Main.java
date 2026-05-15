@@ -16,54 +16,39 @@ enum TokenType {
     SUB,
     MUL,
     DIV,
+    BAND,
+    BOR,
+    LAND,
+    LOR,
     LPAREN,
     RPAREN,
     SEMI,
+    PRINT,
 }
 class Token {
     public final TokenType type;
-
-    public Token(TokenType type) {
-        this.type = type;
-    }
-
-    public int getIntVal() {
-        return 0;
-    }
-
-    public String toString() {
-        return type.name();
-    }
+    public        Token(TokenType type) { this.type = type; }
+    public int    getIntVal()           { return 0; }
+    public String toString()            { return type.name(); }
 }
 class IntToken extends Token {
-    private int val;
-
+    private final int val;
     public IntToken(TokenType type, int val) {
         super(type);
         this.val = val;
     }
-
     @Override
-    public int getIntVal() {
-        return this.val;
-    }
-
+    public int getIntVal() { return this.val; }
     @Override
-    public String toString() {
-        return type.name() + "(" + val + ")";
-    }
+    public String toString() { return type.name() + "(" + val + ")"; }
 }
 class Tokenizer {
-    private String src;
-    private int    pos = 0;
+    private final String src;
+    private int pos = 0;
 
-    public Tokenizer(String src) {
-        this.src = src;
-    }
+    public Tokenizer(String src) { this.src = src; }
 
-    private char currChar() {
-        return pos < src.length() ? src.charAt(pos) : 0;
-    }
+    private char currChar() { return pos < src.length() ? src.charAt(pos) : 0; }
     private char nextChar() {
         ++pos;
         return currChar();
@@ -84,11 +69,11 @@ class Tokenizer {
             case '1': case '2': case '3':
             case '4': case '5': case '6':
             case '7': case '8': case '9':
-                int x = (int)(c - '0');
+                int x = c - '0';
                 for (;;) {
                     c = nextChar();
                     if (c < '0' || '9' < c) break;
-                    x = 10*x + (int)(c - '0');
+                    x = 10*x + (c - '0');
                 }
                 return new IntToken(TokenType.INT, x);
             case '+':
@@ -112,7 +97,41 @@ class Tokenizer {
             case ';':
                 ++pos;
                 return new Token(TokenType.SEMI);
+            case '&':
+                ++pos;
+                if (currChar() == '&') {
+                    ++pos;
+                    return new Token(TokenType.LAND);
+                }
+                return new Token(TokenType.BAND);
+            case '|':
+                ++pos;
+                if (currChar() == '|') {
+                    ++pos;
+                    return new Token(TokenType.LOR);
+                }
+                return new Token(TokenType.BOR);
             default:
+                int identifierStart = pos;
+                int identifierStop  = pos;
+                while (identifierStop < src.length()) {
+                    char c2 = src.charAt(identifierStop);
+                    if (!(  ('a' <= c2 && c2 <= 'z') ||
+                            ('A' <= c2 && c2 <= 'Z') ||
+                            ((identifierStop != identifierStart) && ('0' <= c2 && c2 <= '9')) ||
+                            c2 == '_')
+                    ) break;
+                    ++identifierStop;
+                }
+                if (identifierStop != identifierStart) {
+                    pos = identifierStop;
+                    String identifier = src.substring(identifierStart, identifierStop);
+                    if (identifier.equals("print")) {
+                        return new Token(TokenType.PRINT);
+                    } else {
+                        throw new ParseError("Other identifiers not handled!");
+                    }
+                }
                 throw new ParseError("Unexpected character '" + c + "'!");
         }
     }
@@ -136,14 +155,43 @@ enum BinOp {
     SUB,
     MUL,
     DIV,
+    BAND,
+    BOR,
+    LAND,
+    LOR,
 }
 record BinExpr(BinOp op, Expr lhs, Expr rhs) implements Expr {
     public String toString() {
-        return "(" + op.name() + " " + lhs + " " + rhs + ")";
+        return op.name() + "(" + lhs + " " + rhs + ")";
+    }
+}
+class Stmt {
+    public Stmt next = null;
+}
+class SingleExprStmt extends Stmt {
+    public Expr expr;
+}
+class PrintStmt extends SingleExprStmt {
+    public PrintStmt(Expr expr) { this.expr = expr; }
+    public String toString() { return "PRINT(" + expr + ")"; }
+}
+class ExprStmt extends SingleExprStmt {
+    public ExprStmt(Expr expr) { this.expr = expr; }
+    public String toString() { return "EXPR_STMT(" + expr + ")"; }
+}
+class Program {
+    public Stmt firstStmt = null;
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        for (Stmt stmt = firstStmt; stmt != null; stmt = stmt.next) {
+            sb.append(stmt.toString());
+            sb.append('\n');
+        }
+        return sb.toString();
     }
 }
 class Parser {
-    private Tokenizer tokenizer;
+    private final Tokenizer tokenizer;
 
     public Parser(String src) {
         tokenizer = new Tokenizer(src);
@@ -160,7 +208,7 @@ class Parser {
             tok = tokenizer.next();
             if (tok.type != TokenType.RPAREN) {
                 throw new ParseError(
-                    "Expression not closed with matching right parenthsis!");
+                    "Expression not closed with matching right parenthesis!");
             }
         } else {
             throw new ParseError("Unexpected start of expression!");
@@ -177,69 +225,110 @@ class Parser {
         Expr lhs = innerExpr;
         tok = tokenizer.next();
         BinOp op = switch (tok.type) {
-            case ADD -> BinOp.ADD;
-            case SUB -> BinOp.SUB;
-            case MUL -> BinOp.MUL;
-            case DIV -> BinOp.DIV;
-            default -> {
+            case ADD  -> BinOp.ADD;
+            case SUB  -> BinOp.SUB;
+            case MUL  -> BinOp.MUL;
+            case DIV  -> BinOp.DIV;
+            case LAND -> BinOp.LAND;
+            case LOR  -> BinOp.LOR;
+            case BAND -> BinOp.BAND;
+            case BOR  -> BinOp.BOR;
+            default ->
                 throw new ParseError(
                     "Expected binary-operator after expression left-hand-side!");
-            }
         };
         Expr rhs = parseExpr();
         return new BinExpr(op, lhs, rhs);
     }
 
-    public Expr parse() throws ParseError {
-        Expr expr = parseExpr();    
-        Token tok = tokenizer.next();
-        if (tok.type != TokenType.SEMI && 
-            tok.type != TokenType.EOF
-        ) {
-            throw new ParseError(
-                "Expected semicolon or end of file after expression!");
+    public Stmt parseStmt() throws ParseError {
+        Token tok = tokenizer.peek();
+        Stmt stmt;
+        if (tok.type == TokenType.PRINT) {
+            tokenizer.next();
+            Expr expr = parseExpr();
+            stmt = new PrintStmt(expr);
+        } else {
+            Expr expr = parseExpr();
+            stmt = new ExprStmt(expr);
         }
-        return expr;
+        tok = tokenizer.next();
+        if (tok.type != TokenType.SEMI)
+            throw new ParseError("Expected semicolon ';' at end of statement!");
+        return stmt;
+    }
+
+    public Program parse() throws ParseError {
+        Program prog = new Program();
+        Stmt stmt = null;
+        while (tokenizer.peek().type != TokenType.EOF) {
+            Stmt prevStmt = stmt;
+            stmt          = parseStmt();
+            if (prog.firstStmt == null) prog.firstStmt = stmt;
+            if (prevStmt       != null) prevStmt.next  = stmt;
+        }
+        return prog;
     }
 }
 
 class Interpreter {
-    private Parser parser;
+    private final Parser parser;
+    private final StringBuilder output;
 
     public Interpreter(String src) {
         parser = new Parser(src);
+        output = new StringBuilder();
     }
 
-    private int evalExpr(Expr expr) throws InterpreterError {
-        if (expr instanceof IntVal intVal) {
-            return intVal.val();
-        }
+    private boolean intToBool(int x) { return x != 0; }
+    private int boolToInt(boolean b) { return b ? 1 : 0; }
 
-        if (expr instanceof BinExpr binExpr) {
-            int a = evalExpr(binExpr.lhs());
-            int b = evalExpr(binExpr.rhs());
-            switch (binExpr.op()) {
-                case ADD: return a + b;
-                case SUB: return a - b;
-                case MUL: return a * b;
-                case DIV:
+    private int evalExpr(Expr expr) throws InterpreterError {
+        if (expr instanceof IntVal(int val)) return val;
+
+        if (expr instanceof BinExpr(BinOp op, Expr lhs, Expr rhs)) {
+            int a = evalExpr(lhs);
+            int b = evalExpr(rhs);
+            return switch (op) {
+                case ADD  -> a + b;
+                case SUB  -> a - b;
+                case MUL  -> a * b;
+                case BAND -> a & b;
+                case BOR  -> a | b;
+                case LAND -> boolToInt(intToBool(a) && intToBool(b));
+                case LOR  -> boolToInt(intToBool(a) || intToBool(b));
+                case DIV  -> {
                     if (b == 0)
                         throw new InterpreterError("Division by zero!");
-                    return a / b;
-            }
+                    yield a / b;
+                }
+            };
         }
 
         throw new InterpreterError("Unexpected expression type!");
     }
 
-    public int interpret() throws ParseError, InterpreterError {
-        Expr expr = parser.parse();
-        return evalExpr(expr);
+    public String interpret() throws ParseError, InterpreterError {
+        Program prog = parser.parse();
+        for (Stmt stmt = prog.firstStmt; stmt != null; stmt = stmt.next) {
+            switch (stmt) {
+                case PrintStmt printStmt -> {
+                    int exprResult = evalExpr(printStmt.expr);
+                    output.append(exprResult);
+                    output.append('\n');
+                }
+                case ExprStmt exprStmt ->
+                    evalExpr(exprStmt.expr);
+                default ->
+                    throw new InterpreterError("Unexpected statement type!");
+            }
+        }
+        return output.toString();
     }
 }
 
 public class Main {
-    public static void main(String[] args) throws ParseError, InterpreterError {
+    static void main() throws ParseError, InterpreterError {
         //Tokenizer tokenizer = new Tokenizer("1 + 2");
         //for (;;) {
         //    Token tok = tokenizer.next();
@@ -247,21 +336,34 @@ public class Main {
         //    if (tok.type == TokenType.EOF) break;
         //}
 
-        Parser parser = new Parser("1 + 2");
+        Parser parser = new Parser("1 + 2;");
+        System.out.println(parser.parse());
+        parser = new Parser("1 + 2*3;");
+        System.out.println(parser.parse());
+        parser = new Parser("(1 + 2) * 3;");
+        System.out.println(parser.parse());
+        parser = new Parser("(1 + (2/3)) * 4;");
+        System.out.println(parser.parse());
+        parser = new Parser("0 || 2;");
+        System.out.println(parser.parse());
+        parser = new Parser("print 1 + 2;");
         System.out.println(parser.parse());
 
-        parser = new Parser("1 + 2*3");
-        System.out.println(parser.parse());
-
-        parser = new Parser("(1 + 2) * 3");
-        System.out.println(parser.parse());
-
-        parser = new Parser("(1 + (2/3)) * 4");
-        System.out.println(parser.parse());
-
-        assert new Interpreter("1 + 2").interpret() == 3;
-        assert new Interpreter("1 + (2*3)").interpret() == 7;
-        assert new Interpreter("(1 + 2) * 3").interpret() == 9;
-        assert new Interpreter("(1 + (2/3)) * 4").interpret() == 4;
+        assert new Interpreter("print 1 + 2;").interpret().equals("3\n");
+        assert new Interpreter("print 1 + (2*3);").interpret().equals("7\n");
+        assert new Interpreter("print (1 + 2) * 3;").interpret().equals("9\n");
+        assert new Interpreter("print (1 + (2/3)) * 4;").interpret().equals("4\n");
+        assert new Interpreter("print 1 | 2;").interpret().equals("3\n");
+        assert new Interpreter("print 2 & 3;").interpret().equals("2\n");
+        assert new Interpreter("print 1 || 0;").interpret().equals("1\n");
+        assert new Interpreter("print 0 || 2;").interpret().equals("1\n");
+        assert new Interpreter("print 0 || 0;").interpret().equals("0\n");
+        assert new Interpreter("print 1 && 2;").interpret().equals("1\n");
+        assert new Interpreter("print 1 && 0;").interpret().equals("0\n");
+        assert new Interpreter("print 0 && 2;").interpret().equals("0\n");
+        assert new Interpreter(
+            "print 1;\n" +
+            "print 2;"
+        ).interpret().equals("1\n2\n");
     }
 }
